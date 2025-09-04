@@ -1,0 +1,66 @@
+version: '3.8'
+
+services:
+  wordpress:
+    image: wordpress:6.4-php8.2-apache
+    container_name: jgrants-wordpress
+    ports:
+      - "8080:80"
+    environment:
+      WORDPRESS_DB_HOST: mysql:3306
+      WORDPRESS_DB_NAME: wordpress
+      WORDPRESS_DB_USER: wordpress
+      WORDPRESS_DB_PASSWORD: wordpress_password
+      WORDPRESS_DEBUG: 'true'
+      WORDPRESS_DEBUG_LOG: 'true'
+      WORDPRESS_DEBUG_DISPLAY: 'false'
+      WP_ENVIRONMENT_TYPE: 'local'
+    volumes:
+      - ./wordpress:/var/www/html
+      - ./plugins:/var/www/html/wp-content/plugins
+      - ./themes:/var/www/html/wp-content/themes
+      - ./uploads:/var/www/html/wp-content/uploads
+    depends_on:
+      - mysql
+    networks:
+      - jgrants-network
+    restart: unless-stopped
+
+  mysql:
+    image: mysql:8.0
+    container_name: jgrants-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root_password
+      MYSQL_DATABASE: wordpress
+      MYSQL_USER: wordpress
+      MYSQL_PASSWORD: wordpress_password
+    volumes:
+      - mysql_data:/var/lib/mysql
+    ports:
+      - "3307:3306"
+    networks:
+      - jgrants-network
+    restart: unless-stopped
+
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin:latest
+    container_name: jgrants-phpmyadmin
+    environment:
+      PMA_HOST: mysql
+      PMA_PORT: 3306
+      PMA_USER: wordpress
+      PMA_PASSWORD: wordpress_password
+    ports:
+      - "8081:80"
+    depends_on:
+      - mysql
+    networks:
+      - jgrants-network
+    restart: unless-stopped
+
+volumes:
+  mysql_data:
+
+networks:
+  jgrants-network:
+    driver: bridge

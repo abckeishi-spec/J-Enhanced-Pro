@@ -1,0 +1,244 @@
+/**
+ * JGrants Integration Admin Styles
+ */
+
+/* General styles */
+.jgrants-sync-controls {
+    margin: 20px 0;
+    padding: 15px;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+}
+
+.jgrants-sync-controls button {
+    margin-right: 10px;
+}
+
+#sync-status {
+    display: inline-block;
+    margin-left: 10px;
+    font-weight: bold;
+}
+
+#sync-status.syncing {
+    color: #f39c12;
+}
+
+#sync-status.success {
+    color: #27ae60;
+}
+
+#sync-status.error {
+    color: #e74c3c;
+}
+
+/* Dashboard widget styles */
+.jgrants-dashboard-widget p {
+    margin: 10px 0;
+}
+
+.jgrants-dashboard-widget strong {
+    display: inline-block;
+    min-width: 100px;
+}
+
+/* Grant status styles */
+.grant-status {
+    display: inline-block;
+    padding: 3px 8px;
+    border-radius: 3px;
+    font-size: 12px;
+    font-weight: bold;
+}
+
+.grant-status-success {
+    background-color: #d4edda;
+    color: #155724;
+}
+
+.grant-status-warning {
+    background-color: #fff3cd;
+    color: #856404;
+}
+
+/* Settings page styles */
+.form-table textarea.large-text {
+    width: 100%;
+    max-width: 600px;
+}
+
+/* Test result styles */
+#test-result {
+    margin-left: 10px;
+    font-weight: bold;
+}
+
+#test-result.success {
+    color: #27ae60;
+}
+
+#test-result.error {
+    color: #e74c3c;
+}
+
+/* Log table styles */
+.wp-list-table .dashicons {
+    font-size: 16px;
+    margin-right: 5px;
+    vertical-align: middle;
+}
+
+/* Meta box styles */
+.grant-meta-box-field {
+    margin-bottom: 15px;
+}
+
+.grant-meta-box-field label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: 600;
+}
+
+.grant-meta-box-field input[type="text"],
+.grant-meta-box-field input[type="url"],
+.grant-meta-box-field input[type="number"],
+.grant-meta-box-field input[type="date"],
+.grant-meta-box-field textarea,
+.grant-meta-box-field select {
+    width: 100%;
+}
+
+.grant-meta-box-field textarea {
+    min-height: 80px;
+}
+
+.grant-meta-box-field .description {
+    margin-top: 5px;
+    color: #666;
+    font-size: 13px;
+}
+
+/* AI generation box styles */
+#grant_ai_settings .inside {
+    padding: 10px;
+}
+
+#grant_ai_settings p {
+    margin: 10px 0;
+}
+
+#regenerate-ai-content {
+    width: 100%;
+    text-align: center;
+}
+
+#regenerate-ai-content.loading {
+    opacity: 0.6;
+    pointer-events: none;
+}
+
+/* Admin notices */
+.jgrants-admin-notice {
+    padding: 12px;
+}
+
+.jgrants-admin-notice h3 {
+    margin-top: 0;
+}
+
+/* Responsive styles */
+@media screen and (max-width: 782px) {
+    .form-table th {
+        display: block;
+        width: 100%;
+        padding-bottom: 10px;
+    }
+    
+    .form-table td {
+        display: block;
+        width: 100%;
+        padding-left: 0;
+    }
+    
+    .jgrants-dashboard-widget strong {
+        display: block;
+        margin-bottom: 5px;
+    }
+}
+
+/* Loading spinner */
+.jgrants-spinner {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 3px solid rgba(0,0,0,.1);
+    border-radius: 50%;
+    border-top-color: #333;
+    animation: jgrants-spin 1s ease-in-out infinite;
+    margin-left: 10px;
+    vertical-align: middle;
+}
+
+@keyframes jgrants-spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Sync history table */
+.sync-history-table {
+    margin-top: 20px;
+}
+
+.sync-history-table th {
+    font-weight: 600;
+}
+
+.sync-history-table td {
+    padding: 10px;
+}
+
+/* Button group */
+.button-group {
+    display: inline-block;
+    margin: 10px 0;
+}
+
+.button-group .button {
+    margin-right: 5px;
+}
+
+/* Settings sections */
+.jgrants-settings-section {
+    margin: 30px 0;
+    padding: 20px;
+    background: #fff;
+    border: 1px solid #e5e5e5;
+    box-shadow: 0 1px 1px rgba(0,0,0,.04);
+}
+
+.jgrants-settings-section h2 {
+    margin-top: 0;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #e5e5e5;
+}
+
+/* Status indicators */
+.status-indicator {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-right: 5px;
+}
+
+.status-indicator.active {
+    background-color: #27ae60;
+}
+
+.status-indicator.inactive {
+    background-color: #e74c3c;
+}
+
+.status-indicator.pending {
+    background-color: #f39c12;
+}
