@@ -6,26 +6,32 @@ if (!defined('ABSPATH')) {
 }
 
 /**
- * AI Content Generator Class
+ * AI Content Generator Class using Gemini API
  */
 class AI_Generator {
     
     private $api_key;
     private $model;
-    private $api_url = 'https://api.openai.com/v1/chat/completions';
+    private $api_url = 'https://generativelanguage.googleapis.com/v1beta/models/';
     
     /**
      * Constructor
      */
     public function __construct() {
-        $this->api_key = get_option('openai_api_key', '');
-        $this->model = get_option('openai_model', 'gpt-4-turbo-preview');
+        $this->api_key = get_option('gemini_api_key', '');
+        $this->model = get_option('gemini_model', 'gemini-pro');
     }
     
     /**
      * Generate all AI content for a grant post
      */
     public function generate_content_for_post($post_id) {
+        // Check rate limiting
+        if (!$this->check_rate_limit()) {
+            error_log('AI generation rate limit reached');
+            return false;
+        }
+        
         $post = get_post($post_id);
         if (!$post || $post->post_type !== 'grant') {
             return false;
@@ -35,33 +41,39 @@ class AI_Generator {
         $grant_data = $this->get_grant_data($post_id);
         
         // Generate title if needed
-        $title = $this->generate_title($grant_data);
-        if ($title && empty($post->post_title)) {
-            wp_update_post([
-                'ID' => $post_id,
-                'post_title' => $title
-            ]);
+        if (get_option('ai_generate_title', true)) {
+            $title = $this->generate_title($grant_data);
+            if ($title && empty($post->post_title)) {
+                wp_update_post([
+                    'ID' => $post_id,
+                    'post_title' => $title
+                ]);
+            }
         }
         
         // Generate excerpt
-        $excerpt = $this->generate_excerpt($grant_data);
-        if ($excerpt) {
-            wp_update_post([
-                'ID' => $post_id,
-                'post_excerpt' => $excerpt
-            ]);
+        if (get_option('ai_generate_excerpt', true)) {
+            $excerpt = $this->generate_excerpt($grant_data);
+            if ($excerpt) {
+                wp_update_post([
+                    'ID' => $post_id,
+                    'post_excerpt' => $excerpt
+                ]);
+            }
         }
         
         // Generate main content
-        $content = $this->generate_detailed_content($grant_data);
-        if ($content) {
-            wp_update_post([
-                'ID' => $post_id,
-                'post_content' => $content
-            ]);
+        if (get_option('ai_generate_content', true)) {
+            $content = $this->generate_detailed_content($grant_data);
+            if ($content) {
+                wp_update_post([
+                    'ID' => $post_id,
+                    'post_content' => $content
+                ]);
+            }
         }
         
-        // Auto-categorize
+        // Auto-categorize - Dynamic category creation
         if (get_option('ai_categorization', true)) {
             $this->categorize_grant($post_id, $grant_data);
         }
@@ -71,14 +83,55 @@ class AI_Generator {
             $this->extract_prefecture($post_id, $grant_data);
         }
         
-        // Update AI generation timestamp
+        // Update AI generation timestamp and count
         update_post_meta($post_id, '_ai_generated', current_time('mysql'));
+        $this->increment_generation_count();
         
         return true;
     }
     
     /**
-     * Generate SEO-optimized title
+     * Check rate limiting for AI generation
+     */
+    private function check_rate_limit() {
+        $interval_minutes = get_option('ai_rate_limit_minutes', 3);
+        $max_requests = get_option('ai_rate_limit_requests', 2);
+        
+        $last_requests = get_transient('jgrants_ai_requests') ?: [];
+        $now = time();
+        
+        // Clean old requests
+        $last_requests = array_filter($last_requests, function($timestamp) use ($now, $interval_minutes) {
+            return $timestamp > ($now - ($interval_minutes * 60));
+        });
+        
+        if (count($last_requests) >= $max_requests) {
+            return false;
+        }
+        
+        // Add current request
+        $last_requests[] = $now;
+        set_transient('jgrants_ai_requests', $last_requests, $interval_minutes * 60);
+        
+        return true;
+    }
+    
+    /**
+     * Increment generation count for statistics
+     */
+    private function increment_generation_count() {
+        $count = get_option('ai_generation_count', 0);
+        update_option('ai_generation_count', $count + 1);
+        
+        // Daily count
+        $today = date('Y-m-d');
+        $daily_key = 'ai_generation_count_' . $today;
+        $daily_count = get_option($daily_key, 0);
+        update_option($daily_key, $daily_count + 1);
+    }
+    
+    /**
+     * Generate SEO-optimized title using Gemini
      */
     public function generate_title($grant_data) {
         $prompt_template = get_option('ai_title_prompt', 
@@ -97,9 +150,7 @@ class AI_Generator {
             $prompt_template
         );
         
-        $system_prompt = "あなたは補助金情報のSEOスペシャリストです。検索エンジンで上位表示され、ユーザーがクリックしたくなるタイトルを作成してください。";
-        
-        $response = $this->call_openai_api($system_prompt, $prompt);
+        $response = $this->call_gemini_api($prompt);
         
         if ($response && !is_wp_error($response)) {
             return $this->sanitize_title($response);
@@ -109,15 +160,13 @@ class AI_Generator {
     }
     
     /**
-     * Generate excerpt/summary
+     * Generate excerpt/summary using Gemini
      */
     public function generate_excerpt($grant_data) {
         $prompt = "以下の補助金情報から、重要なポイントを150文字以内で簡潔にまとめてください。\n\n";
         $prompt .= $this->format_grant_data_for_prompt($grant_data);
         
-        $system_prompt = "あなたは補助金情報を簡潔にまとめる専門家です。事業者が最も知りたい情報を優先的に含めてください。";
-        
-        $response = $this->call_openai_api($system_prompt, $prompt);
+        $response = $this->call_gemini_api($prompt);
         
         if ($response && !is_wp_error($response)) {
             return $this->sanitize_excerpt($response);
@@ -127,7 +176,7 @@ class AI_Generator {
     }
     
     /**
-     * Generate detailed content
+     * Generate detailed content using Gemini
      */
     public function generate_detailed_content($grant_data) {
         $prompt_template = get_option('ai_content_prompt',
@@ -138,9 +187,7 @@ class AI_Generator {
         $prompt .= $this->format_grant_data_for_prompt($grant_data);
         $prompt .= "\n\nHTMLタグ（h2, h3, p, ul, li, strong, table等）を使用して、読みやすく構造化された記事を作成してください。";
         
-        $system_prompt = "あなたは補助金申請のコンサルタントです。申請を検討している事業者に対して、分かりやすく実用的な情報を提供してください。専門用語は必要に応じて説明を加えてください。";
-        
-        $response = $this->call_openai_api($system_prompt, $prompt, 2000);
+        $response = $this->call_gemini_api($prompt);
         
         if ($response && !is_wp_error($response)) {
             return $this->format_content_html($response);
@@ -150,51 +197,40 @@ class AI_Generator {
     }
     
     /**
-     * Auto-categorize grant using AI
+     * Auto-categorize grant using AI - Dynamic category creation
      */
     public function categorize_grant($post_id, $grant_data) {
-        $categories = $this->get_available_categories();
-        $categories_list = implode(', ', array_column($categories, 'name'));
+        // Get existing categories
+        $existing_categories = get_terms([
+            'taxonomy' => 'grant_category',
+            'hide_empty' => false,
+            'fields' => 'names'
+        ]);
         
-        $prompt = "以下の補助金情報を分析し、最も適切なカテゴリを1つ選んでください。\n";
-        $prompt .= "選択可能なカテゴリ: " . $categories_list . "\n\n";
+        $prompt = "以下の補助金情報を分析し、最も適切なカテゴリを判定してください。\n";
+        $prompt .= "既存のカテゴリがある場合はそれを使用し、適切なものがない場合は新しいカテゴリ名を提案してください。\n";
+        $prompt .= "既存カテゴリ: " . implode(', ', $existing_categories) . "\n\n";
         $prompt .= $this->format_grant_data_for_prompt($grant_data);
-        $prompt .= "\n\n選択したカテゴリ名のみを回答してください。";
+        $prompt .= "\n\nカテゴリ名のみを回答してください。";
         
-        $system_prompt = "あなたは補助金の分類専門家です。補助金の内容を正確に分析し、最も適切なカテゴリを判定してください。";
-        
-        $response = $this->call_openai_api($system_prompt, $prompt);
+        $response = $this->call_gemini_api($prompt);
         
         if ($response && !is_wp_error($response)) {
             $category_name = trim($response);
             
-            // Find matching category
-            foreach ($categories as $category) {
-                if ($category['name'] === $category_name || 
-                    stripos($category['name'], $category_name) !== false ||
-                    stripos($category_name, $category['name']) !== false) {
-                    
-                    // Get or create term
-                    $term = term_exists($category['name'], 'grant_category');
-                    if (!$term) {
-                        $term = wp_insert_term($category['name'], 'grant_category', [
-                            'slug' => $category['slug']
-                        ]);
-                    }
-                    
-                    if (!is_wp_error($term)) {
-                        $term_id = is_array($term) ? $term['term_id'] : $term;
-                        wp_set_object_terms($post_id, $term_id, 'grant_category');
-                        return true;
-                    }
-                }
+            // Check if category exists, if not create it
+            $term = term_exists($category_name, 'grant_category');
+            if (!$term) {
+                $term = wp_insert_term($category_name, 'grant_category', [
+                    'slug' => sanitize_title($category_name)
+                ]);
             }
-        }
-        
-        // Default to "その他" if categorization fails
-        $other_term = term_exists('その他', 'grant_category');
-        if ($other_term) {
-            wp_set_object_terms($post_id, $other_term['term_id'], 'grant_category');
+            
+            if (!is_wp_error($term)) {
+                $term_id = is_array($term) ? $term['term_id'] : $term;
+                wp_set_object_terms($post_id, $term_id, 'grant_category');
+                return true;
+            }
         }
         
         return false;
@@ -204,6 +240,26 @@ class AI_Generator {
      * Extract prefecture from grant data using AI
      */
     public function extract_prefecture($post_id, $grant_data) {
+        // If prefecture data already exists, use it
+        if (!empty($grant_data['prefecture']) && is_array($grant_data['prefecture'])) {
+            $term_ids = [];
+            foreach ($grant_data['prefecture'] as $prefecture) {
+                $term = term_exists($prefecture, 'prefecture');
+                if (!$term) {
+                    $term = wp_insert_term($prefecture, 'prefecture');
+                }
+                if (!is_wp_error($term)) {
+                    $term_ids[] = is_array($term) ? $term['term_id'] : $term;
+                }
+            }
+            
+            if (!empty($term_ids)) {
+                wp_set_object_terms($post_id, $term_ids, 'prefecture');
+                return true;
+            }
+        }
+        
+        // Use AI to extract if not clear
         $prefectures = $this->get_prefecture_list();
         $prefectures_list = implode(', ', $prefectures);
         
@@ -214,9 +270,7 @@ class AI_Generator {
         $prompt .= $this->format_grant_data_for_prompt($grant_data);
         $prompt .= "\n\n都道府県名のみを回答してください。";
         
-        $system_prompt = "あなたは日本の地理と行政区分の専門家です。補助金の対象地域を正確に判定してください。";
-        
-        $response = $this->call_openai_api($system_prompt, $prompt);
+        $response = $this->call_gemini_api($prompt);
         
         if ($response && !is_wp_error($response)) {
             $extracted_prefectures = array_map('trim', explode(',', $response));
@@ -224,7 +278,6 @@ class AI_Generator {
             
             foreach ($extracted_prefectures as $prefecture) {
                 if (in_array($prefecture, $prefectures)) {
-                    // Get or create term
                     $term = term_exists($prefecture, 'prefecture');
                     if (!$term) {
                         $term = wp_insert_term($prefecture, 'prefecture');
@@ -242,7 +295,7 @@ class AI_Generator {
             }
         }
         
-        // Default to "全国" if extraction fails
+        // Default to "全国"
         $nationwide_term = term_exists('全国', 'prefecture');
         if ($nationwide_term) {
             wp_set_object_terms($post_id, $nationwide_term['term_id'], 'prefecture');
@@ -252,37 +305,59 @@ class AI_Generator {
     }
     
     /**
-     * Call OpenAI API
+     * Call Gemini API
      */
-    private function call_openai_api($system_prompt, $user_prompt, $max_tokens = 500) {
+    private function call_gemini_api($prompt) {
         if (empty($this->api_key)) {
-            return new \WP_Error('no_api_key', 'OpenAI APIキーが設定されていません');
+            return new \WP_Error('no_api_key', 'Gemini APIキーが設定されていません');
         }
         
-        $messages = [
-            ['role' => 'system', 'content' => $system_prompt],
-            ['role' => 'user', 'content' => $user_prompt]
-        ];
+        $url = $this->api_url . $this->model . ':generateContent?key=' . $this->api_key;
         
         $body = [
-            'model' => $this->model,
-            'messages' => $messages,
-            'max_tokens' => $max_tokens,
-            'temperature' => 0.7,
-            'top_p' => 0.9,
+            'contents' => [
+                [
+                    'parts' => [
+                        ['text' => $prompt]
+                    ]
+                ]
+            ],
+            'generationConfig' => [
+                'temperature' => 0.7,
+                'topK' => 40,
+                'topP' => 0.95,
+                'maxOutputTokens' => get_option('gemini_max_tokens', 2048),
+            ],
+            'safetySettings' => [
+                [
+                    'category' => 'HARM_CATEGORY_HARASSMENT',
+                    'threshold' => 'BLOCK_MEDIUM_AND_ABOVE'
+                ],
+                [
+                    'category' => 'HARM_CATEGORY_HATE_SPEECH',
+                    'threshold' => 'BLOCK_MEDIUM_AND_ABOVE'
+                ],
+                [
+                    'category' => 'HARM_CATEGORY_SEXUALLY_EXPLICIT',
+                    'threshold' => 'BLOCK_MEDIUM_AND_ABOVE'
+                ],
+                [
+                    'category' => 'HARM_CATEGORY_DANGEROUS_CONTENT',
+                    'threshold' => 'BLOCK_MEDIUM_AND_ABOVE'
+                ]
+            ]
         ];
         
-        $response = wp_remote_post($this->api_url, [
+        $response = wp_remote_post($url, [
             'timeout' => 60,
             'headers' => [
-                'Authorization' => 'Bearer ' . $this->api_key,
                 'Content-Type' => 'application/json',
             ],
             'body' => json_encode($body),
         ]);
         
         if (is_wp_error($response)) {
-            error_log('OpenAI API Error: ' . $response->get_error_message());
+            error_log('Gemini API Error: ' . $response->get_error_message());
             return $response;
         }
         
@@ -290,15 +365,76 @@ class AI_Generator {
         $data = json_decode($response_body, true);
         
         if (isset($data['error'])) {
-            error_log('OpenAI API Error: ' . $data['error']['message']);
+            error_log('Gemini API Error: ' . $data['error']['message']);
             return new \WP_Error('api_error', $data['error']['message']);
         }
         
-        if (isset($data['choices'][0]['message']['content'])) {
-            return $data['choices'][0]['message']['content'];
+        if (isset($data['candidates'][0]['content']['parts'][0]['text'])) {
+            return $data['candidates'][0]['content']['parts'][0]['text'];
         }
         
         return new \WP_Error('invalid_response', 'Invalid API response');
+    }
+    
+    /**
+     * Batch generate AI content for multiple posts
+     */
+    public function batch_generate($post_ids, $options = []) {
+        $results = [
+            'success' => 0,
+            'failed' => 0,
+            'skipped' => 0
+        ];
+        
+        $batch_size = $options['batch_size'] ?? get_option('ai_batch_size', 5);
+        $delay = $options['delay'] ?? get_option('ai_batch_delay', 10); // seconds
+        
+        $chunks = array_chunk($post_ids, $batch_size);
+        
+        foreach ($chunks as $chunk) {
+            foreach ($chunk as $post_id) {
+                // Check if already generated recently
+                if ($this->is_recently_generated($post_id)) {
+                    $results['skipped']++;
+                    continue;
+                }
+                
+                $result = $this->generate_content_for_post($post_id);
+                
+                if ($result) {
+                    $results['success']++;
+                } else {
+                    $results['failed']++;
+                }
+                
+                // Delay between requests
+                if ($delay > 0) {
+                    sleep($delay);
+                }
+            }
+            
+            // Longer delay between chunks
+            if ($delay > 0) {
+                sleep($delay * 2);
+            }
+        }
+        
+        return $results;
+    }
+    
+    /**
+     * Check if content was recently generated
+     */
+    private function is_recently_generated($post_id) {
+        $generated_time = get_post_meta($post_id, '_ai_generated', true);
+        if (!$generated_time) {
+            return false;
+        }
+        
+        $hours = get_option('ai_regenerate_hours', 24);
+        $threshold = strtotime('-' . $hours . ' hours');
+        
+        return strtotime($generated_time) > $threshold;
     }
     
     /**
@@ -310,7 +446,7 @@ class AI_Generator {
         return [
             'title' => $post->post_title,
             'description' => $post->post_content,
-            'grant_id' => get_post_meta($post_id, '_grant_id', true),
+            'subsidy_id' => get_post_meta($post_id, '_subsidy_id', true),
             'organization' => get_post_meta($post_id, '_organization', true),
             'max_amount' => get_post_meta($post_id, '_max_amount', true),
             'min_amount' => get_post_meta($post_id, '_min_amount', true),
@@ -320,6 +456,9 @@ class AI_Generator {
             'deadline' => get_post_meta($post_id, '_deadline', true),
             'application_start' => get_post_meta($post_id, '_application_start', true),
             'official_url' => get_post_meta($post_id, '_official_url', true),
+            'industry' => get_post_meta($post_id, '_industry', true),
+            'target_area' => get_post_meta($post_id, '_target_area', true),
+            'prefecture' => get_post_meta($post_id, '_prefecture', true),
         ];
     }
     
@@ -332,6 +471,8 @@ class AI_Generator {
         $formatted .= "実施機関: " . ($grant_data['organization'] ?? 'N/A') . "\n";
         $formatted .= "目的: " . ($grant_data['purpose'] ?? 'N/A') . "\n";
         $formatted .= "対象者: " . ($grant_data['target'] ?? 'N/A') . "\n";
+        $formatted .= "業種: " . ($grant_data['industry'] ?? 'N/A') . "\n";
+        $formatted .= "対象地域: " . ($grant_data['target_area'] ?? 'N/A') . "\n";
         
         if (!empty($grant_data['max_amount'])) {
             $formatted .= "最大支援額: " . number_format($grant_data['max_amount']) . "円\n";
@@ -350,14 +491,6 @@ class AI_Generator {
         }
         
         return $formatted;
-    }
-    
-    /**
-     * Get available categories
-     */
-    private function get_available_categories() {
-        $api_client = new API_Client();
-        return $api_client->fetch_categories();
     }
     
     /**
@@ -444,24 +577,51 @@ class AI_Generator {
     }
     
     /**
-     * REST API handler for regenerating content
+     * REST API handler for batch generation
      */
-    public function rest_regenerate_content($request) {
-        $post_id = $request->get_param('id');
+    public function rest_batch_generate($request) {
+        $post_ids = $request->get_param('post_ids');
+        $options = [
+            'batch_size' => $request->get_param('batch_size') ?? 5,
+            'delay' => $request->get_param('delay') ?? 10,
+        ];
         
-        if (!current_user_can('edit_post', $post_id)) {
-            return new \WP_Error('permission_denied', 'Permission denied', ['status' => 403]);
+        if (!is_array($post_ids) || empty($post_ids)) {
+            return new \WP_Error('invalid_params', 'Invalid post IDs', ['status' => 400]);
         }
         
-        $result = $this->generate_content_for_post($post_id);
+        $results = $this->batch_generate($post_ids, $options);
         
-        if ($result) {
-            return new \WP_REST_Response([
-                'success' => true,
-                'message' => 'AIコンテンツが正常に生成されました'
-            ], 200);
-        } else {
-            return new \WP_Error('generation_failed', 'AIコンテンツの生成に失敗しました', ['status' => 500]);
-        }
+        return new \WP_REST_Response([
+            'success' => true,
+            'results' => $results,
+            'message' => sprintf(
+                '処理完了: %d件成功, %d件失敗, %d件スキップ',
+                $results['success'],
+                $results['failed'],
+                $results['skipped']
+            )
+        ], 200);
+    }
+    
+    /**
+     * Get AI generation statistics
+     */
+    public function get_statistics() {
+        $today = date('Y-m-d');
+        
+        return [
+            'total_generations' => get_option('ai_generation_count', 0),
+            'today_generations' => get_option('ai_generation_count_' . $today, 0),
+            'rate_limit' => [
+                'minutes' => get_option('ai_rate_limit_minutes', 3),
+                'requests' => get_option('ai_rate_limit_requests', 2),
+            ],
+            'batch_settings' => [
+                'size' => get_option('ai_batch_size', 5),
+                'delay' => get_option('ai_batch_delay', 10),
+            ],
+            'model' => get_option('gemini_model', 'gemini-pro'),
+        ];
     }
 }
