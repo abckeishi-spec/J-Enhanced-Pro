@@ -42,6 +42,12 @@ class Sync_Manager {
                 throw new \Exception($subsidies->get_error_message());
             }
             
+            // Limit processing based on settings (since API doesn't have limit parameter)
+            $max_import = intval($params['max_import_count'] ?? 100);
+            if (count($subsidies) > $max_import) {
+                $subsidies = array_slice($subsidies, 0, $max_import);
+            }
+            
             $stats = [
                 'fetched' => count($subsidies),
                 'created' => 0,
@@ -50,12 +56,8 @@ class Sync_Manager {
                 'ai_generated' => 0
             ];
             
-            // Limit processing based on settings
-            $max_import = $params['max_import_count'] ?? 100;
-            $subsidies = array_slice($subsidies, 0, $max_import);
-            
             // Process subsidies
-            $batch_size = $params['batch_size'] ?? 10;
+            $batch_size = intval($params['batch_size'] ?? 10);
             $chunks = array_chunk($subsidies, $batch_size);
             
             foreach ($chunks as $chunk_index => $chunk) {
@@ -78,8 +80,9 @@ class Sync_Manager {
                 }
                 
                 // Delay between batches
-                if ($chunk_index < count($chunks) - 1 && !empty($params['batch_delay'])) {
-                    sleep($params['batch_delay']);
+                $batch_delay = intval($params['batch_delay'] ?? 5);
+                if ($chunk_index < count($chunks) - 1 && $batch_delay > 0) {
+                    sleep($batch_delay);
                 }
             }
             
@@ -105,6 +108,10 @@ class Sync_Manager {
             
             if (is_wp_error($subsidy)) {
                 throw new \Exception($subsidy->get_error_message());
+            }
+            
+            if (!$subsidy) {
+                throw new \Exception('補助金が見つかりませんでした');
             }
             
             // Process the subsidy
@@ -134,14 +141,14 @@ class Sync_Manager {
             'keyword' => $search_params['keyword'] ?? '補助金',
             'sort' => $search_params['sort'] ?? 'created_date',
             'order' => $search_params['order'] ?? 'DESC',
-            'acceptance' => $search_params['acceptance'] ?? '1',
-            'max_import_count' => $search_params['count'] ?? 10,
-            'generate_ai_content' => $search_params['generate_ai'] ?? true,
-            'auto_publish' => $search_params['auto_publish'] ?? false,
+            'acceptance' => $search_params['acceptance'] ?? '0', // Get all by default
+            'max_import_count' => intval($search_params['count'] ?? 10),
+            'generate_ai_content' => ($search_params['generate_ai'] ?? true) === true || ($search_params['generate_ai'] ?? 'true') === 'true',
+            'auto_publish' => ($search_params['auto_publish'] ?? false) === true || ($search_params['auto_publish'] ?? 'false') === 'true',
         ];
         
         // Add optional filters
-        foreach (['use_purpose', 'industry', 'target_area_search', 'prefectures'] as $filter) {
+        foreach (['use_purpose', 'industry', 'target_area_search', 'target_number_of_employees'] as $filter) {
             if (!empty($search_params[$filter])) {
                 $default_params[$filter] = $search_params[$filter];
             }
@@ -180,8 +187,15 @@ class Sync_Manager {
             // Generate AI content if enabled and post was created/updated
             if ($post_id && ($options['generate_ai_content'] ?? get_option('ai_content_generation', true))) {
                 if ($status !== 'skipped') {
-                    $ai_result = $this->ai_generator->generate_content_for_post($post_id);
-                    $ai_generated = $ai_result === true;
+                    // Check if we should generate AI content
+                    $should_generate = ($options['generate_ai_content'] ?? false) === true || 
+                                     ($options['generate_ai_content'] ?? 'false') === 'true' ||
+                                     get_option('sync_generate_ai', true);
+                    
+                    if ($should_generate) {
+                        $ai_result = $this->ai_generator->generate_content_for_post($post_id);
+                        $ai_generated = $ai_result === true;
+                    }
                 }
             }
             
@@ -204,6 +218,10 @@ class Sync_Manager {
      * Find existing grant by subsidy_id
      */
     private function find_existing_grant($subsidy_id) {
+        if (empty($subsidy_id)) {
+            return null;
+        }
+        
         $args = [
             'post_type' => 'grant',
             'meta_query' => [
@@ -232,7 +250,11 @@ class Sync_Manager {
     private function create_grant($subsidy_data, $options = []) {
         // Determine post status
         $post_status = 'draft';
-        if ($options['auto_publish'] ?? get_option('auto_publish_grants', false)) {
+        $auto_publish = ($options['auto_publish'] ?? false) === true || 
+                       ($options['auto_publish'] ?? 'false') === 'true' ||
+                       get_option('auto_publish_grants', false);
+        
+        if ($auto_publish) {
             $post_status = 'publish';
         }
         
@@ -295,21 +317,23 @@ class Sync_Manager {
      */
     private function prepare_meta_data($subsidy_data) {
         return [
-            '_subsidy_id' => $subsidy_data['subsidy_id'],
-            '_organization' => $subsidy_data['organization'],
-            '_max_amount' => $subsidy_data['max_amount'],
-            '_min_amount' => $subsidy_data['min_amount'],
-            '_subsidy_rate' => $subsidy_data['subsidy_rate'],
-            '_target' => $subsidy_data['target'],
-            '_purpose' => $subsidy_data['purpose'],
-            '_deadline' => $subsidy_data['deadline'],
-            '_application_start' => $subsidy_data['application_start'],
-            '_official_url' => $subsidy_data['official_url'],
-            '_grant_status' => $subsidy_data['status'],
-            '_industry' => $subsidy_data['industry'],
-            '_target_area' => $subsidy_data['target_area'],
+            '_subsidy_id' => $subsidy_data['subsidy_id'] ?? '',
+            '_subsidy_code' => $subsidy_data['subsidy_code'] ?? '',
+            '_organization' => $subsidy_data['organization'] ?? '',
+            '_max_amount' => $subsidy_data['max_amount'] ?? 0,
+            '_min_amount' => $subsidy_data['min_amount'] ?? 0,
+            '_subsidy_rate' => $subsidy_data['subsidy_rate'] ?? '',
+            '_target' => $subsidy_data['target'] ?? '',
+            '_purpose' => $subsidy_data['purpose'] ?? '',
+            '_deadline' => $subsidy_data['deadline'] ?? '',
+            '_application_start' => $subsidy_data['application_start'] ?? '',
+            '_official_url' => $subsidy_data['official_url'] ?? '',
+            '_grant_status' => $subsidy_data['status'] ?? '',
+            '_industry' => $subsidy_data['industry'] ?? '',
+            '_target_area' => $subsidy_data['target_area'] ?? '',
             '_target_employees' => $subsidy_data['target_number_of_employees'] ?? '',
-            '_is_recommended' => $subsidy_data['is_recommended'] ?? false,
+            '_support_organization' => $subsidy_data['support_organization'] ?? '',
+            '_created_date' => $subsidy_data['created_date'] ?? '',
             '_last_synced' => current_time('mysql'),
         ];
     }
@@ -353,21 +377,23 @@ class Sync_Manager {
             }
         }
         
-        // Set target (business type)
+        // Set target (business type) based on industry
         if (!empty($subsidy_data['industry'])) {
             $industries = explode('、', $subsidy_data['industry']);
             $target_terms = [];
             
             foreach ($industries as $industry) {
                 $industry = trim($industry);
-                $term = term_exists($industry, 'grant_target');
-                if (!$term) {
-                    $term = wp_insert_term($industry, 'grant_target', [
-                        'slug' => sanitize_title($industry)
-                    ]);
-                }
-                if (!is_wp_error($term)) {
-                    $target_terms[] = is_array($term) ? $term['term_id'] : $term;
+                if (!empty($industry)) {
+                    $term = term_exists($industry, 'grant_target');
+                    if (!$term) {
+                        $term = wp_insert_term($industry, 'grant_target', [
+                            'slug' => sanitize_title($industry)
+                        ]);
+                    }
+                    if (!is_wp_error($term)) {
+                        $target_terms[] = is_array($term) ? $term['term_id'] : $term;
+                    }
                 }
             }
             
@@ -377,7 +403,7 @@ class Sync_Manager {
         }
         
         // Set amount range
-        if (!empty($subsidy_data['max_amount'])) {
+        if (!empty($subsidy_data['max_amount']) && $subsidy_data['max_amount'] > 0) {
             $amount_range = $this->determine_amount_range($subsidy_data['max_amount']);
             if ($amount_range) {
                 $term = term_exists($amount_range, 'amount_range');
@@ -416,7 +442,7 @@ class Sync_Manager {
      * Update grant status based on deadline
      */
     private function update_grant_status($post_id, $subsidy_data) {
-        $status = $subsidy_data['status'];
+        $status = $subsidy_data['status'] ?? 'active';
         
         // Update post status based on grant status
         if ($status === 'closed' || $status === 'expired') {
@@ -425,10 +451,17 @@ class Sync_Manager {
                 'post_status' => 'expired'
             ]);
         } elseif ($status === 'upcoming') {
-            wp_update_post([
-                'ID' => $post_id,
-                'post_status' => 'future'
-            ]);
+            // Keep as draft or scheduled
+            $current_status = get_post_status($post_id);
+            if ($current_status === 'publish') {
+                // Don't change if already published
+            } else {
+                wp_update_post([
+                    'ID' => $post_id,
+                    'post_status' => 'future',
+                    'post_date' => $subsidy_data['application_start'] ?? current_time('mysql')
+                ]);
+            }
         }
         
         update_post_meta($post_id, '_grant_status', $status);
@@ -442,10 +475,10 @@ class Sync_Manager {
             'keyword' => get_option('sync_default_keyword', '補助金'),
             'sort' => get_option('sync_sort_field', 'created_date'),
             'order' => get_option('sync_sort_order', 'DESC'),
-            'acceptance' => get_option('sync_acceptance_filter', '1'),
-            'max_import_count' => get_option('sync_max_import', 50),
-            'batch_size' => get_option('sync_batch_size', 10),
-            'batch_delay' => get_option('sync_batch_delay', 5),
+            'acceptance' => get_option('sync_acceptance_filter', '0'),
+            'max_import_count' => intval(get_option('sync_max_import', 50)),
+            'batch_size' => intval(get_option('sync_batch_size', 10)),
+            'batch_delay' => intval(get_option('sync_batch_delay', 5)),
             'generate_ai_content' => get_option('sync_generate_ai', true),
             'update_existing' => get_option('sync_update_existing', true),
             'auto_publish' => get_option('auto_publish_grants', false),
@@ -459,6 +492,12 @@ class Sync_Manager {
         global $wpdb;
         $table_name = $wpdb->prefix . 'jgrants_sync_log';
         
+        // Check if table exists
+        if ($wpdb->get_var("SHOW TABLES LIKE '$table_name'") != $table_name) {
+            // Create table if it doesn't exist
+            $this->create_sync_log_table();
+        }
+        
         $wpdb->insert(
             $table_name,
             [
@@ -471,9 +510,40 @@ class Sync_Manager {
     }
     
     /**
+     * Create sync log table
+     */
+    private function create_sync_log_table() {
+        global $wpdb;
+        
+        $table_name = $wpdb->prefix . 'jgrants_sync_log';
+        $charset_collate = $wpdb->get_charset_collate();
+        
+        $sql = "CREATE TABLE IF NOT EXISTS $table_name (
+            id bigint(20) NOT NULL AUTO_INCREMENT,
+            sync_date datetime DEFAULT CURRENT_TIMESTAMP,
+            grants_fetched int(11) DEFAULT 0,
+            grants_created int(11) DEFAULT 0,
+            grants_updated int(11) DEFAULT 0,
+            ai_generated int(11) DEFAULT 0,
+            status varchar(20) DEFAULT 'pending',
+            error_message text,
+            PRIMARY KEY (id),
+            INDEX idx_sync_date (sync_date),
+            INDEX idx_status (status)
+        ) $charset_collate;";
+        
+        require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
+        dbDelta($sql);
+    }
+    
+    /**
      * Complete sync log
      */
     private function complete_sync_log($log_id, $stats, $status, $error_message = '') {
+        if (!$log_id) {
+            return;
+        }
+        
         global $wpdb;
         $table_name = $wpdb->prefix . 'jgrants_sync_log';
         
@@ -503,6 +573,11 @@ class Sync_Manager {
         global $wpdb;
         $table_name = $wpdb->prefix . 'jgrants_sync_log';
         
+        // Check if table exists
+        if ($wpdb->get_var("SHOW TABLES LIKE '$table_name'") != $table_name) {
+            return [];
+        }
+        
         $results = $wpdb->get_results(
             $wpdb->prepare(
                 "SELECT * FROM $table_name ORDER BY sync_date DESC LIMIT %d",
@@ -510,7 +585,7 @@ class Sync_Manager {
             )
         );
         
-        return $results;
+        return $results ?: [];
     }
     
     /**
@@ -525,14 +600,14 @@ class Sync_Manager {
         
         // Get parameters from AJAX request
         $params = [
-            'keyword' => sanitize_text_field($_POST['keyword'] ?? ''),
-            'max_import_count' => intval($_POST['count'] ?? 10),
-            'generate_ai_content' => ($_POST['generate_ai'] ?? 'true') === 'true',
-            'auto_publish' => ($_POST['auto_publish'] ?? 'false') === 'true',
+            'keyword' => sanitize_text_field($_POST['keyword'] ?? '補助金'),
+            'count' => intval($_POST['count'] ?? 10),
+            'generate_ai' => $_POST['generate_ai'] ?? 'true',
+            'auto_publish' => $_POST['auto_publish'] ?? 'false',
         ];
         
         // Add optional filters
-        foreach (['use_purpose', 'industry', 'target_area_search'] as $filter) {
+        foreach (['use_purpose', 'industry', 'target_area_search', 'target_number_of_employees'] as $filter) {
             if (!empty($_POST[$filter])) {
                 $params[$filter] = sanitize_text_field($_POST[$filter]);
             }
@@ -583,10 +658,15 @@ class Sync_Manager {
         $result = $this->import_subsidy_by_id($subsidy_id, $options);
         
         if ($result['success']) {
+            $edit_link = '';
+            if ($result['post_id']) {
+                $edit_link = get_edit_post_link($result['post_id'], '');
+            }
+            
             wp_send_json_success([
                 'message' => '補助金情報をインポートしました',
                 'post_id' => $result['post_id'],
-                'edit_link' => get_edit_post_link($result['post_id'])
+                'edit_link' => $edit_link
             ]);
         } else {
             wp_send_json_error([
@@ -677,12 +757,16 @@ class Sync_Manager {
         
         $today = date('Y-m-d');
         $table_name = $wpdb->prefix . 'jgrants_sync_log';
-        $today_syncs = $wpdb->get_var(
-            $wpdb->prepare(
-                "SELECT COUNT(*) FROM $table_name WHERE DATE(sync_date) = %s",
-                $today
-            )
-        );
+        
+        $today_syncs = 0;
+        if ($wpdb->get_var("SHOW TABLES LIKE '$table_name'") == $table_name) {
+            $today_syncs = $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT COUNT(*) FROM $table_name WHERE DATE(sync_date) = %s",
+                    $today
+                )
+            );
+        }
         
         return [
             'total_grants' => intval($total_grants->publish + $total_grants->draft),
